@@ -1,10 +1,15 @@
 import { CATEGORIES } from "./campus";
 
-// Everything runs locally on open Gemma models via Ollama (OLLAMA_MODEL, OLLAMA_EMBED_MODEL).
+// Gemini when GEMINI_API_KEY is set (Vercel); open Gemma models via Ollama otherwise, and as the chat fallback.
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_EMBED = process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-001";
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const OLLAMA_EMBED = process.env.OLLAMA_EMBED_MODEL ?? "embeddinggemma";
 export const aiEnabled = true;
-export const EMBED_MODEL = `ollama:${OLLAMA_EMBED}`;
+// Vectors from different models can't be compared, so embeddings never fall back; store.ts re-embeds rows when this changes.
+export const EMBED_MODEL = GEMINI_KEY ? `gemini:${GEMINI_EMBED}` : `ollama:${OLLAMA_EMBED}`;
 
 export type ItemDetails = {
   category: string;
@@ -56,6 +61,32 @@ function describeFirst(schema: object): object {
 
 async function chat(parts: unknown[], schema: object): Promise<unknown> {
   schema = describeFirst(schema);
+  if (!GEMINI_KEY) return ollamaChat(parts, schema);
+  try {
+    return await geminiChat(parts, schema);
+  } catch (e) {
+    console.error("Gemini failed, falling back to Ollama:", e);
+    return ollamaChat(parts, schema);
+  }
+}
+
+async function geminiChat(parts: unknown[], schema: object): Promise<unknown> {
+  const res = await fetch(`${GEMINI_URL}/${GEMINI_MODEL}:generateContent`, {
+    signal: AbortSignal.timeout(60_000),
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY! },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: { temperature: 0.2, responseMimeType: "application/json", responseJsonSchema: stripFormat(schema) },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const text = (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned no content");
+  return JSON.parse(text);
+}
+
+async function ollamaChat(parts: unknown[], schema: object): Promise<unknown> {
   const p = parts as { text?: string; inlineData?: { data: string } }[];
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     signal: AbortSignal.timeout(90_000),
@@ -129,6 +160,15 @@ export const embedText = (d: { category: string; color: string; brand: string; d
   `${d.category}. ${d.color}. ${d.brand}. ${d.description}`.toLowerCase();
 
 export async function embed(text: string): Promise<number[]> {
+  if (GEMINI_KEY) {
+    const r = await fetch(`${GEMINI_URL}/${GEMINI_EMBED}:embedContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
+      body: JSON.stringify({ content: { parts: [{ text }] } }),
+    });
+    if (!r.ok) throw new Error(`Gemini embed ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    return (await r.json()).embedding.values;
+  }
   const r = await fetch(`${OLLAMA_URL}/api/embed`, { method: "POST", body: JSON.stringify({ model: OLLAMA_EMBED, input: text }) });
   if (!r.ok) throw new Error(`Ollama embed ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return (await r.json()).embeddings[0];
@@ -214,7 +254,7 @@ QUESTION: ${question}
 const STOP = new Set(["the", "and", "with", "on", "of", "a", "an", "in", "near", "its", "it's", "has", "small", "there"]);
 const words = (s: string) => (s.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length > 2 && !STOP.has(w));
 
-// shortcut: word-overlap judge, no semantics; unused while Ollama is always on.
+// shortcut: word-overlap judge, no semantics; unused while a model is always on.
 function mockJudge(field: string, value: string, answer: string): FieldVerdict {
   const want = words(value);
   const got = words(answer);
@@ -250,7 +290,7 @@ export function mockNormalize(text: string): Normalized {
   return { category, color, brand: "unknown", description: text };
 }
 
-// shortcut: bag-of-words hash vector, no semantics; unused while Ollama is always on.
+// shortcut: bag-of-words hash vector, no semantics; unused while a model is always on.
 function mockEmbed(text: string): number[] {
   const v = new Array(256).fill(0);
   for (const w of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
