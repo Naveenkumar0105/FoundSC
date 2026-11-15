@@ -8,7 +8,14 @@ import { MIN_SCORE, scoreMatch } from "@/lib/match";
 
 const str = (v: unknown, max = 300) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
-export async function POST(req: Request) {
+// Uncaught errors otherwise reach the client as an empty 500; log and return a readable message.
+export const POST = (req: Request) =>
+  post(req).catch((e) => {
+    console.error(e);
+    return Response.json({ error: `Server error: ${e instanceof Error ? e.message : e}` }, { status: 500 });
+  });
+
+async function post(req: Request) {
   const b = await req.json();
   if (!isUscEmail(b.email)) return Response.json({ error: "Use your @usc.edu email" }, { status: 401 });
   // Credit/debit cards are never posted.

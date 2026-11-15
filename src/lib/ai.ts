@@ -2,7 +2,7 @@ import { CATEGORIES } from "./campus";
 
 // Gemini when GEMINI_API_KEY is set (Vercel); open Gemma models via Ollama otherwise, and as the chat fallback.
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite"; // 2.5 models 404 for new API keys
 const GEMINI_EMBED = process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-001";
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
@@ -70,8 +70,19 @@ async function chat(parts: unknown[], schema: object): Promise<unknown> {
   }
 }
 
+// Free tier returns 429 (rate limit) or 503 (overloaded) in bursts; wait and retry instead of failing the request.
+async function geminiFetch(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if ((res.status !== 429 && res.status !== 503) || attempt === 3) return res;
+    const wait = Number(res.headers.get("retry-after")) * 1000 || 2000 * 2 ** attempt;
+    console.warn(`Gemini ${res.status}, retrying in ${wait}ms`);
+    await new Promise((r) => setTimeout(r, Math.min(wait, 20_000)));
+  }
+}
+
 async function geminiChat(parts: unknown[], schema: object): Promise<unknown> {
-  const res = await fetch(`${GEMINI_URL}/${GEMINI_MODEL}:generateContent`, {
+  const res = await geminiFetch(`${GEMINI_URL}/${GEMINI_MODEL}:generateContent`, {
     signal: AbortSignal.timeout(60_000),
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY! },
@@ -159,15 +170,22 @@ export async function describeItem(base64: string, mimeType: string): Promise<No
 export const embedText = (d: { category: string; color: string; brand: string; description: string }) =>
   `${d.category}. ${d.color}. ${d.brand}. ${d.description}`.toLowerCase();
 
+// As-you-type search re-embeds the same text often; cache to save quota. shortcut: unbounded per-process Map, add LRU if memory grows.
+const embedCache = new Map<string, number[]>();
+
 export async function embed(text: string): Promise<number[]> {
   if (GEMINI_KEY) {
-    const r = await fetch(`${GEMINI_URL}/${GEMINI_EMBED}:embedContent`, {
+    const hit = embedCache.get(text);
+    if (hit) return hit;
+    const r = await geminiFetch(`${GEMINI_URL}/${GEMINI_EMBED}:embedContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify({ content: { parts: [{ text }] } }),
     });
     if (!r.ok) throw new Error(`Gemini embed ${r.status}: ${(await r.text()).slice(0, 300)}`);
-    return (await r.json()).embedding.values;
+    const v = (await r.json()).embedding.values;
+    embedCache.set(text, v);
+    return v;
   }
   const r = await fetch(`${OLLAMA_URL}/api/embed`, { method: "POST", body: JSON.stringify({ model: OLLAMA_EMBED, input: text }) });
   if (!r.ok) throw new Error(`Ollama embed ${r.status}: ${(await r.text()).slice(0, 300)}`);

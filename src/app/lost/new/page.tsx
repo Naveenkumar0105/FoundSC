@@ -67,13 +67,19 @@ export default function LostNew() {
     setBusy(true);
     setError("");
     saveEmail(email);
-    const res = await fetch("/api/lost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const json = await res.json();
-    if (!res.ok) {
+    try {
+      const res = await fetch("/api/lost", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      // A crashed request can come back with no JSON body.
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBusy(false);
+        return setError(json.error ?? `Couldn't save (error ${res.status}). Try again.`);
+      }
+      router.push(claimId ? `/claim/${claimId}?lost=${json.id}` : `/lost/${json.id}`);
+    } catch {
       setBusy(false);
-      return setError(json.error ?? "Something went wrong");
+      setError("Network error. Check your connection and try again.");
     }
-    router.push(claimId ? `/claim/${claimId}?lost=${json.id}` : `/lost/${json.id}`);
   }
 
   return (

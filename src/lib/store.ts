@@ -64,8 +64,10 @@ const TABLES: Record<Table, string> = { found: "found_items", lost: "lost_report
 
 const g = globalThis as unknown as { pgPool?: Pool; pgReady?: Promise<unknown> };
 function pool() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set. Create a PostgreSQL database in Replit (or put its URL in .env.local).");
-  g.pgPool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  // SUPABASE_DB_URL wins over DATABASE_URL, which Replit manages and points at its dev-only database.
+  const url = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
+  if (!url) throw new Error("SUPABASE_DB_URL / DATABASE_URL is not set. Add a Postgres URL in Replit Secrets (or .env.local).");
+  g.pgPool ??= new Pool({ connectionString: url, max: 5 });
   g.pgReady ??= g.pgPool.query(`
     create table if not exists found_items (id text primary key, data jsonb not null, created_at timestamptz not null default now());
     create table if not exists lost_reports (id text primary key, data jsonb not null, created_at timestamptz not null default now());

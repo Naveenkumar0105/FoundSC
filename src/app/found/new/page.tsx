@@ -81,20 +81,26 @@ export default function FoundNew() {
     saveEmail(email);
     const hidden = details.filter((d) => d.keep).map(({ field, value, question }) => ({ field, value, question }));
     if (ownDetail.trim()) hidden.push({ field: "finder note", value: ownDetail.trim(), question: "Describe something distinctive about the item." });
-    const res = await fetch("/api/found", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...f, email, hidden_details: hidden, building: gpsBuilding, found_where: foundWhere,
-        dropoff_desk: leftAt === OTHER ? leftAtOther : leftAt,
-        dropoff_spot: spot === OTHER ? spotOther : spot,
-        image: photo?.b64,
-      }),
-    });
-    const json = await res.json();
-    setSubmitting(false);
-    if (!res.ok) return setError(json.error ?? "Something went wrong");
-    setDone({ ...json, seconds: Math.round((Date.now() - started.current) / 1000) });
+    try {
+      const res = await fetch("/api/found", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...f, email, hidden_details: hidden, building: gpsBuilding, found_where: foundWhere,
+          dropoff_desk: leftAt === OTHER ? leftAtOther : leftAt,
+          dropoff_spot: spot === OTHER ? spotOther : spot,
+          image: photo?.b64,
+        }),
+      });
+      // A crashed or oversized request can come back with no JSON body.
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return setError(json.error ?? `Couldn't post (error ${res.status}). Try again.`);
+      setDone({ ...json, seconds: Math.round((Date.now() - started.current) / 1000) });
+    } catch {
+      setError("Network error. Check your connection and try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (done)
