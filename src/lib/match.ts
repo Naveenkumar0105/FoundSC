@@ -16,7 +16,8 @@ export type Match = { found: FoundItem; score: number; reasons: string[] };
 // Score = 50% description similarity + 20% category + 15% location + 15% time (all soft, nothing filtered out).
 export function scoreMatch(found: FoundItem, lost: LostReport): Match {
   const sim = Math.max(0, cosine(found.embedding, lost.embedding));
-  const cat = found.category === lost.category ? 1 : 0;
+  // "Other" vs "Other" says nothing about the item, so it is not a category match.
+  const cat = found.category === lost.category && found.category !== "Other" ? 1 : 0;
 
   const fz = byCode(found.building)?.zone;
   const sameBldg = lost.buildings.includes(found.building);
@@ -35,7 +36,9 @@ export function scoreMatch(found: FoundItem, lost: LostReport): Match {
   const words = new Set((lost.raw_text ?? lost.description).toLowerCase().match(/[a-z]+/g) ?? []);
   const nameParts = found.id_name?.toLowerCase().match(/[a-z]+/g) ?? [];
   const nameHit = nameParts.length >= 2 && nameParts.every((w) => words.has(w));
-  const score = nameHit ? 0.95 : 0.5 * sim + 0.2 * cat + 0.15 * loc + 0.15 * time;
+  // Place and time alone can't make a match: the item itself must look related (real category or close description).
+  const related = nameHit || cat || sim >= MIN_SIM;
+  const score = nameHit ? 0.95 : related ? 0.5 * sim + 0.2 * cat + 0.15 * loc + 0.15 * time : 0;
 
   const reasons: string[] = nameHit ? ["name on ID matches"] : [];
   if (cat) reasons.push(`same category`);
@@ -49,10 +52,13 @@ export function scoreMatch(found: FoundItem, lost: LostReport): Match {
 }
 
 export const MIN_SCORE = 0.55;
+// embeddinggemma: unrelated items sit at 0.25-0.41, same-item descriptions 0.55+.
+const MIN_SIM = 0.5;
 
-export function topMatches(lost: LostReport, found: FoundItem[], k = 5): Match[] {
+// Verified items are hidden from everyone except `mine` (ids this person passed the claim for).
+export function topMatches(lost: LostReport, found: FoundItem[], k = 5, mine: Set<string> = new Set()): Match[] {
   return found
-    .filter((f) => f.status !== "returned")
+    .filter((f) => f.status !== "returned" && (f.status !== "verified" || mine.has(f.id)))
     .map((f) => scoreMatch(f, lost))
     .filter((m) => m.score >= MIN_SCORE)
     .sort((a, b) => b.score - a.score)

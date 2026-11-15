@@ -2,13 +2,14 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { placeName, timeAgo } from "@/lib/format";
+import { useRouter } from "next/navigation";
+import { MatchList, type MatchView } from "../MatchList";
 
-type MatchView = { id: string; public_summary: string; building: string; found_at: string; status: string; score: number; reasons: string[]; verifiable: boolean };
 type Data = { report: { raw_text: string; category: string; color: string }; matches: MatchView[] };
 
 export default function LostReport({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
 
@@ -37,31 +38,13 @@ export default function LostReport({ params }: { params: Promise<{ id: string }>
 
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h1 className="text-xl font-bold">{data.matches.length ? "Possible matches" : "Not found yet"}</h1>
+          <h1 className="text-xl font-bold">{data.matches.length ? "We may have found it" : "Not found yet"}</h1>
           <span className="flex items-center gap-1 text-xs text-stone-500"><span className="size-2 animate-pulse rounded-full bg-green-600" />watching</span>
         </div>
         {data.matches.length === 0 && (
-          <p className="rounded-2xl bg-white p-4 text-sm text-stone-600 shadow-sm">Nothing matches right now. Please visit this page again later. Bookmark it.</p>
+          <p className="rounded-2xl bg-white p-4 text-sm text-stone-600 shadow-sm">Nothing like that has been turned in yet. Bookmark this page and check back later. You can also check in person with USC DPS Lost &amp; Found, or the front desk of the building where you lost it.</p>
         )}
-        <ul className="space-y-3">
-          {data.matches.map((m, i) => (
-            <li key={m.id} className={`rounded-2xl bg-white p-4 shadow-sm ${i === 0 ? "ring-2 ring-gold" : ""}`}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-lg font-semibold first-letter:uppercase">{m.public_summary}</p>
-                  <p className="text-sm text-stone-600">Found near {placeName(m.building)} · {timeAgo(m.found_at)}</p>
-                </div>
-                <span className="rounded-full bg-cardinal px-2.5 py-1 text-sm font-bold text-white" aria-label={`${m.score} percent match`}>{m.score}%</span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {m.reasons.map((r) => <span key={r} className="rounded-full bg-stone-100 px-2.5 py-1 text-xs">{r}</span>)}
-              </div>
-              <Link href={`/claim/${m.id}?lost=${id}`} className="mt-3 block w-full rounded-xl border-2 border-cardinal py-2.5 text-center font-semibold text-cardinal hover:bg-red-50">
-                {m.verifiable ? "This is mine: answer a few questions" : "This is mine: bring proof to the desk"}
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {data.matches.length > 0 && <MatchList matches={data.matches} onPick={(m) => router.push(`/claim/${m}?lost=${id}`)} />}
         <p className="mt-3 text-xs text-stone-500">Pickup location is shown only after you pass the ownership check.</p>
       </section>
       <Link href="/" className="block text-center text-sm text-cardinal underline">Back home</Link>

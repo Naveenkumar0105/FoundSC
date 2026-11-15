@@ -9,7 +9,18 @@ const post = (path, body) =>
 const get = (path) => fetch(BASE + path).then(json);
 
 const report = async (text, buildings, email) => (await post("/api/lost", { text, buildings, when: "today", email })).id;
-const claim = (found, lost, answers) => post(`/api/claim/${found}`, { lost, answers });
+// Chats one answer per question. An array entry is [answer, follow-up]; with no follow-up given, says "not sure".
+async function claim(found, lost, answers) {
+  let r = { status: 200 };
+  for (const a of answers) {
+    const [first, more = "not sure"] = Array.isArray(a) ? a : [a];
+    r = await post(`/api/claim/${found}`, { lost, message: first });
+    if (r.status !== 200 || r.result) return r;
+    if (/say a bit more/.test(r.reply)) r = await post(`/api/claim/${found}`, { lost, message: more });
+    if (r.status !== 200 || r.result) return r;
+  }
+  return r;
+}
 
 const BOTTLE = "seed-3"; // navy Hydro Flask, dog paw sticker, dent on bottom, Leavey
 const KEYS = "seed-5"; // keys on cardinal lanyard with Lego figure, THH
@@ -27,9 +38,18 @@ assert.ok(!JSON.stringify(q).includes("paw"), "questions must not leak answers")
 assert.equal((await claim(BOTTLE, thief, ["a sticker", "yes"])).result, "failed");
 assert.equal((await claim(BOTTLE, thief, ["dog paw sticker", "dent on the bottom"])).status, 409);
 
+// 2b. A vague first answer gets a follow-up instead of a rejection.
+const vague = await report("navy blue water bottle hydro flask", ["LVL"], "vague@usc.edu");
+const f = await post(`/api/claim/${BOTTLE}`, { lost: vague, message: "a sticker" });
+assert.match(f.reply, /say a bit more/);
+
 // 3. Real owner passes and sees the pickup desk.
 const owner = await report("navy hydro flask water bottle", ["LVL"], "owner@usc.edu");
-const ok = await claim(BOTTLE, owner, ["a paw print sticker from a dog", "it has a dent on the bottom"]);
+// More detail than the finder recorded must still pass.
+const ok = await claim(BOTTLE, owner, [
+  "a white paw print sticker from my dog's vet clinic, near the top under the lid",
+  "it has a dent on the bottom from when I dropped it on the stairs",
+]);
 assert.equal(ok.result, "passed");
 assert.match(ok.pickup.where, /Leavey/);
 
@@ -48,7 +68,7 @@ assert.equal((await get(`/api/claim/${KEYS}?lost=${late}`)).status, 423, "item s
 // 5. Plain items skip the quiz and require proof at the desk.
 const pods = await report("white airpods case", ["SAL"], "pods@usc.edu");
 assert.equal((await get(`/api/claim/${PLAIN_AIRPODS}?lost=${pods}`)).mode, "hard_proof");
-const hp = await claim(PLAIN_AIRPODS, pods, []);
+const hp = await post(`/api/claim/${PLAIN_AIRPODS}`, { lost: pods });
 assert.equal(hp.result, "passed");
 assert.match(hp.pickup.bring, /serial/);
 

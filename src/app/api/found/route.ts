@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     await savePhoto(id, Buffer.from(b.image, "base64"));
   }
 
-  const hidden = Array.isArray(b.hidden_details) ? b.hidden_details.slice(0, 3) : [];
+  const hidden = Array.isArray(b.hidden_details) ? b.hidden_details.slice(0, 5) : [];
   const item: FoundItem = {
     id,
     ...details,

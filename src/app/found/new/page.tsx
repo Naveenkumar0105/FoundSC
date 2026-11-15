@@ -39,8 +39,10 @@ export default function FoundNew() {
     navigator.geolocation.getCurrentPosition(
       (p) => {
         const b = nearestBuilding(p.coords.latitude, p.coords.longitude);
+        // ~450m from the closest building = not on campus; don't guess.
+        if (Math.hypot(b.lat - p.coords.latitude, b.lng - p.coords.longitude) > 0.004) return setGeoNote("You seem to be off campus. Pick the building below.");
         setGpsBuilding(b.code);
-        setGeoNote(`Location shared: near ${b.name}`);
+        setGeoNote("Location detected");
         setLeftAt((cur) => cur || (b.desk ? b.code : ""));
       },
       () => setGeoNote("Location not shared. Type the building below."),
@@ -99,7 +101,7 @@ export default function FoundNew() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl bg-white p-5 shadow-sm">
-          <p className="text-sm font-semibold text-green-700">Posted in {done.seconds}s. Thank you!</p>
+          <p className="text-sm font-semibold text-green-700">Posted. Thank you!</p>
           <p className="mt-2 text-sm">
             Left at {placeName(done.dropoff_desk)}, {done.dropoff_spot}.
           </p>
@@ -135,7 +137,14 @@ export default function FoundNew() {
         <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => onPhoto(e.target.files?.[0])} />
       </label>
 
-      {geoNote && <p className="text-xs text-stone-600">{geoNote}</p>}
+      {geoNote && (
+        <label className="block text-xs text-stone-600">{geoNote}. Wrong? Change where you found it:
+          <select className={`${input} mt-1`} value={gpsBuilding} onChange={(e) => setGpsBuilding(e.target.value)}>
+            <option value="">Not sure / off campus</option>
+            {BUILDINGS.filter((b) => b.code !== "DPS").map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
+          </select>
+        </label>
+      )}
       {analyzing && <p className="animate-pulse rounded-xl bg-gold/30 px-3 py-2 text-sm">Reading the photo…</p>}
       {aiNote && <p className="rounded-xl bg-stone-100 px-3 py-2 text-sm text-stone-700">{aiNote}</p>}
 

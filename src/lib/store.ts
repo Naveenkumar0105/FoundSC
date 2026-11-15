@@ -46,9 +46,11 @@ export type Claim = {
   found_id: string;
   lost_id: string;
   email: string;
-  answers: string[];
-  per_field: { field: string; match: boolean; reason: string }[]; // private audit trail for the desk
-  passed: boolean;
+  answers: string[]; // final answer per question (first answer + follow-up), set when the chat ends
+  per_field: { field: string; match: boolean; guess?: boolean; reason: string }[]; // private audit trail for the desk
+  passed: boolean | null; // null while the chat is still going
+  turns?: string[][]; // claimant messages per question, so a refresh resumes the chat
+  awaiting_followup?: boolean; // last question got a follow-up that hasn't been answered yet
   hard_proof: boolean; // low-distinctiveness item: desk checks serial / Find My
   created_at: string;
 };

@@ -3,10 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BUILDINGS } from "@/lib/campus";
-import { placeName, timeAgo } from "@/lib/format";
+import { MatchList, type MatchView } from "../MatchList";
 import { input, savedEmail, saveEmail, toJpeg, USC_EMAIL } from "@/lib/client";
-
-type MatchView = { id: string; public_summary: string; building: string; found_at: string; score: number; reasons: string[] };
 
 export default function LostNew() {
   const router = useRouter();
@@ -134,32 +132,15 @@ export default function LostNew() {
           <p className="text-sm text-stone-500">{searching ? "Searching…" : "Start typing to search."}</p>
         ) : matches.length === 0 ? (
           <div className="rounded-2xl bg-white p-4 text-sm shadow-sm">
-            <p className="font-semibold">Not found yet.</p>
-            <p className="mt-1 text-stone-600">Nothing matches right now. Please visit again later. New items are added all the time.</p>
+            <p className="font-semibold">Nothing like that has been turned in yet.</p>
+            <p className="mt-1 text-stone-600">Try being more specific: brand, color, stickers, where and when you lost it.</p>
+            <p className="mt-1 text-stone-600">You can also check in person with USC DPS Lost &amp; Found, or the front desk of the building where you lost it.</p>
             <button disabled={busy} onClick={() => save()} className="mt-3 w-full rounded-xl border-2 border-cardinal py-2.5 font-semibold text-cardinal disabled:opacity-50">
               Save this search to check later
             </button>
           </div>
         ) : (
-          <ul className="space-y-3">
-            {matches.map((m, i) => (
-              <li key={m.id} className={`rounded-2xl bg-white p-4 shadow-sm ${i === 0 ? "ring-2 ring-gold" : ""}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-lg font-semibold first-letter:uppercase">{m.public_summary}</p>
-                    <p className="text-sm text-stone-600">Found near {placeName(m.building)} · {timeAgo(m.found_at)}</p>
-                  </div>
-                  <span className="rounded-full bg-cardinal px-2.5 py-1 text-sm font-bold text-white" aria-label={`${m.score} percent match`}>{m.score}%</span>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {m.reasons.map((r) => <span key={r} className="rounded-full bg-stone-100 px-2.5 py-1 text-xs">{r}</span>)}
-                </div>
-                <button disabled={busy} onClick={() => save(m.id)} className="mt-3 w-full rounded-xl border-2 border-cardinal py-2.5 font-semibold text-cardinal hover:bg-red-50 disabled:opacity-50">
-                  This is mine
-                </button>
-              </li>
-            ))}
-          </ul>
+          <MatchList matches={matches} busy={busy} onPick={save} />
         )}
         {error && <p className="mt-2 text-sm font-medium text-red-700">{error}</p>}
       </section>

@@ -18,6 +18,7 @@ export async function POST(req: Request) {
       ...publicFound(m.found),
       score: Math.round(m.score * 100),
       reasons: m.reasons,
+      verifiable: m.found.hidden_details.length > 0 && m.found.distinctiveness !== "low",
     })),
   });
 }

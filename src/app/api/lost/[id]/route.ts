@@ -7,9 +7,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const db = await load();
   const lost = db.lost.find((l) => l.id === id);
   if (!lost) return Response.json({ error: "Not found" }, { status: 404 });
+  const mine = new Set(db.claims.filter((c) => c.email === lost.contact_email && c.passed).map((c) => c.found_id));
   return Response.json({
     report: { id: lost.id, raw_text: lost.raw_text, category: lost.category, color: lost.color, buildings: lost.buildings, created_at: lost.created_at },
-    matches: topMatches(lost, db.found).map((m) => ({
+    matches: topMatches(lost, db.found, 5, mine).map((m) => ({
       ...publicFound(m.found),
       score: Math.round(m.score * 100),
       reasons: m.reasons,
