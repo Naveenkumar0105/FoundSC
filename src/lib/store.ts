@@ -13,6 +13,7 @@ export type FoundItem = {
   sensitive: string;
   id_name?: string; // private: name printed on a found ID, so the owner can search for it
   hidden_details: { field: string; value: string; question: string }[]; // private, finder-confirmed
+  claim_questions?: string[]; // 2-3 simple questions for claimants, generated once on first claim
   building: string; // building code, or "" if unknown
   found_where?: string; // finder's free text, e.g. "Room 201, near the elevator restroom"
   found_at: string;
@@ -51,6 +52,7 @@ export type Claim = {
   passed: boolean | null; // null while the chat is still going
   turns?: string[][]; // claimant messages per question, so a refresh resumes the chat
   awaiting_followup?: boolean; // last question got a follow-up that hasn't been answered yet
+  failed_attempts?: number; // chats that failed before the last one; MAX_ATTEMPTS ends it
   hard_proof: boolean; // low-distinctiveness item: desk checks serial / Find My
   created_at: string;
 };

@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 type Line = { from: "bot" | "me"; text: string };
-type Info = { summary: string; building: string; mode: "quiz" | "hard_proof"; chat: Line[] };
+type Info = { summary: string; building: string; mode: "quiz" | "hard_proof"; tries_left: number; chat: Line[] };
 type Verdict = { field: string; match: boolean; guess?: boolean; reason: string };
-type Outcome = ({ result: "passed"; pickup: { where: string; bring: string } } | { result: "failed" }) & { per_field?: Verdict[]; answers?: string[]; test?: boolean };
+type Outcome = ({ result: "passed"; pickup: { where: string; bring: string } } | { result: "failed" } | { result: "retry"; tries_left: number } | { result: "dps" }) & { per_field?: Verdict[]; answers?: string[]; test?: boolean };
 
 const input = "w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base";
 
@@ -63,7 +63,7 @@ function Claim({ foundId }: { foundId: string }) {
       {outcome.per_field?.length ? (
         <ul className="space-y-1">
           {outcome.per_field.map((v, i) => (
-            <li key={i}>{v.match ? "✓" : "✗"}{v.guess && " (guessing)"} <b>{v.field}</b>: &ldquo;{outcome.answers?.[i]}&rdquo; ({v.reason})</li>
+            <li key={i}>{v.match ? "✓" : "✗"}{v.guess && " (guessing)"} <b>{v.field}</b>: &ldquo;{outcome.answers?.join(" | ")}&rdquo; ({v.reason})</li>
           ))}
         </ul>
       ) : <p className="text-stone-600">No questions for this item (staff proof check).</p>}
@@ -89,6 +89,38 @@ function Claim({ foundId }: { foundId: string }) {
       </div>
     );
 
+  if (outcome?.result === "retry")
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-white p-5 shadow-sm ring-2 ring-gold">
+          <p className="text-sm font-semibold text-stone-700">Not quite</p>
+          <h1 className="mt-2 text-xl font-bold">We couldn&apos;t confirm it&apos;s yours yet.</h1>
+          <p className="mt-2 text-sm text-stone-600">
+            You have {outcome.tries_left} {outcome.tries_left === 1 ? "try" : "tries"} left. Take a moment and describe what you remember about it.
+          </p>
+        </div>
+        <button type="button" onClick={() => { setOutcome(null); setInfo(null); setDraft(""); start(); }} className="w-full rounded-xl bg-cardinal py-3.5 text-lg font-semibold text-white">
+          Try again
+        </button>
+        {back}
+      </div>
+    );
+
+  if (outcome?.result === "dps")
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-white p-5 shadow-sm ring-2 ring-gold">
+          <p className="text-sm font-semibold text-stone-700">No problem</p>
+          <h1 className="mt-2 text-xl font-bold">Talk to USC DPS directly.</h1>
+          <p className="mt-2 text-sm text-stone-600">
+            It&apos;s hard to remember details. Visit USC DPS (Department of Public Safety) with your USCard: an officer can check whether the item was turned in and help you get it back.
+          </p>
+        </div>
+        {testPanel}
+        {back}
+      </div>
+    );
+
   if (outcome?.result === "failed")
     return (
       <div className="space-y-4">
@@ -96,7 +128,7 @@ function Claim({ foundId }: { foundId: string }) {
           <p className="text-sm font-semibold text-red-700">Couldn&apos;t verify</p>
           <h1 className="mt-2 text-xl font-bold">Your answers didn&apos;t match the finder&apos;s details.</h1>
           <p className="mt-2 text-sm text-stone-600">
-            You get one try per item. If it really is yours, visit the desk with your USCard and staff can check in person.
+            If it really is yours, talk to an officer at USC DPS (Department of Public Safety). Bring your USCard: they can check whether the item was turned in and confirm it&apos;s yours in person.
           </p>
         </div>
         {testPanel}
@@ -132,7 +164,7 @@ function Claim({ foundId }: { foundId: string }) {
       ) : (
         <div className="space-y-3 rounded-2xl bg-white p-4 shadow-sm">
           <p className="text-xs text-stone-500">
-            A few quick questions to check it&apos;s yours. Answer in your own words; more detail helps. We may ask a follow-up. You get one chat per item.
+            A few quick questions to check it&apos;s yours. Just describe it the way you remember it. {info.tries_left} {info.tries_left === 1 ? "try" : "tries"} left.
           </p>
           <div className="space-y-2" aria-live="polite">
             {chat.map((l, i) => (

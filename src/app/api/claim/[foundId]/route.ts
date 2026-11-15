@@ -1,18 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { isSpecific, judgeAnswers } from "@/lib/ai";
+import { claimQuestions, judgeOwner } from "@/lib/ai";
 import { placeName } from "@/lib/format";
 import { MIN_SCORE, scoreMatch } from "@/lib/match";
 import { load, mutate, type FoundItem } from "@/lib/store";
 
 const MAX_CLAIMS_PER_DAY = 3;
 const LOCK_AFTER_FAILED_CLAIMANTS = 2;
+const MAX_ATTEMPTS = 3; // chats per claimant per item before we send them to DPS
 // Testing only: unlimited attempts, nothing saved, per-answer verdicts returned. Never set in production.
 const TEST_MODE = process.env.CLAIM_TEST_MODE === "1";
 
-const questionsFor = (f: FoundItem) => f.hidden_details.slice(0, 5);
+// Users are verified, so ask 2-3 easy questions per item and judge the whole description at once.
+// Generated once and saved on the item, so every claimant and every refresh sees the same questions.
+async function questionsFor(f: FoundItem): Promise<string[]> {
+  if (f.claim_questions?.length) return f.claim_questions;
+  const qs = await claimQuestions(f);
+  return mutate((db) => {
+    const item = db.found.find((x) => x.id === f.id)!;
+    item.claim_questions ??= qs; // another request may have saved first: keep theirs
+    return item.claim_questions;
+  });
+}
 const isHardProof = (f: FoundItem) => f.distinctiveness === "low" || f.hidden_details.length === 0;
-// 3+ questions: one miss is fine (owners forget things). 1-2 questions: all must be right.
-const required = (n: number) => (n <= 2 ? n : n - 1);
 // Same text for every item and every vague answer, so it can't hint at the true value.
 const FOLLOW_UP = "Can you say a bit more? Color, text or logo, shape, or exactly where on it.";
 
@@ -92,7 +101,8 @@ export async function GET(req: Request, { params }: Ctx) {
     summary: found.public_summary,
     building: placeName(found.building),
     mode: hardProof ? "hard_proof" : "quiz",
-    chat: hardProof ? [] : transcript(questionsFor(found).map((d) => d.question), conv),
+    tries_left: MAX_ATTEMPTS - (mine?.failed_attempts ?? 0),
+    chat: hardProof ? [] : transcript(await questionsFor(found), conv),
   });
 }
 
@@ -102,11 +112,10 @@ export async function POST(req: Request, { params }: Ctx) {
   const g = await gate(foundId, typeof body.lost === "string" ? body.lost : null);
   if ("error" in g) return Response.json({ error: g.error }, { status: g.status });
   const { found, lost, mine } = g;
-  if (mine && mine.passed !== null) return Response.json({ error: "You've already made your one attempt for this item." }, { status: 409 });
+  if (mine && mine.passed !== null) return Response.json({ error: "You've used all your tries for this item." }, { status: 409 });
 
   const hardProof = isHardProof(found);
-  const truth = questionsFor(found);
-  const qs = truth.map((d) => d.question);
+  const qs = hardProof ? [] : await questionsFor(found);
   const key = `${found.id}:${lost.id}`;
   const before: Conv = TEST_MODE
     ? testChats.get(key) ?? { turns: [], awaiting_followup: false }
@@ -120,9 +129,7 @@ export async function POST(req: Request, { params }: Ctx) {
       conv.turns[conv.turns.length - 1].push(message);
       conv.awaiting_followup = false;
     } else {
-      const q = qs[conv.turns.length];
       conv.turns.push([message]);
-      conv.awaiting_followup = !(await isSpecific(q, message));
     }
   }
 
@@ -152,23 +159,41 @@ export async function POST(req: Request, { params }: Ctx) {
   }
 
   const answers = conv.turns.map((t) => t.join(" / Follow-up: "));
-  let per_field: Awaited<ReturnType<typeof judgeAnswers>> = [];
+  let per_field: Awaited<ReturnType<typeof judgeOwner>>[] = [];
   if (!hardProof) {
     try {
-      per_field = await judgeAnswers(truth, answers);
+      per_field = [await judgeOwner(found, answers)];
     } catch (e) {
       console.error(e);
       // Nothing saved for this message, so resending it retries the check.
       return Response.json({ error: "Verification is unavailable right now. Send your answer again in a moment." }, { status: 503 });
     }
   }
-  // Offering alternatives on any question is guessing, not forgetting.
-  const passed = hardProof || (per_field.filter((v) => v.match).length >= required(truth.length) && !per_field.some((v) => v.guess));
+  const passed = hardProof || per_field[0].match;
+  const failedBefore = mine?.failed_attempts ?? 0;
+  const triesLeft = passed ? 0 : MAX_ATTEMPTS - failedBefore - 1;
 
+  const dontRemember = !passed && per_field[0]?.dont_remember === true;
   if (TEST_MODE) {
     testChats.delete(key);
+    if (dontRemember) return Response.json({ result: "dps", per_field, answers, test: true });
     const extra = { per_field, answers, test: true };
     return Response.json(passed ? { result: "passed", pickup: pickup(found, hardProof), ...extra } : { result: "failed", ...extra });
+  }
+
+  if (dontRemember || triesLeft > 0) {
+    // Not the last try: clear the chat so the next GET starts fresh. Still no hint which answer was wrong.
+    await mutate((db) => {
+      let row = db.claims.find((c) => c.found_id === found.id && c.email === lost.contact_email);
+      if (!row) {
+        row = { id: randomUUID(), found_id: found.id, lost_id: lost.id, email: lost.contact_email,
+          answers: [], per_field: [], passed: null, hard_proof: false, created_at: new Date().toISOString() };
+        db.claims.push(row);
+      }
+      // "I don't remember" doesn't use up a try: we point them to DPS instead.
+      Object.assign(row, { answers, per_field, turns: [], awaiting_followup: false, failed_attempts: failedBefore + (dontRemember ? 0 : 1) });
+    });
+    return Response.json(dontRemember ? { result: "dps" } : { result: "retry", tries_left: triesLeft });
   }
 
   await mutate((db) => {
